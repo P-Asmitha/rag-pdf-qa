@@ -4,6 +4,7 @@ from pypdf import PdfReader
 from sentence_transformers import SentenceTransformer
 import faiss, numpy as np
 from google import genai
+from google.genai import types
 
 st.set_page_config(page_title="Ask Your PDF", page_icon="📄")
 st.title("📄 Ask Your PDF")
@@ -12,6 +13,7 @@ st.caption("Upload a PDF, ask a question, and get an answer from the document wi
 CHUNK_SIZE = 500   # characters in each piece
 STEP = 400         # each piece starts 400 characters after the last, so pieces overlap by 100
 TOP_K = 5          # how many pieces are sent to the AI
+MODELS = ["gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-3-flash-preview"]
 
 @st.cache_resource
 def load_model():
@@ -19,7 +21,6 @@ def load_model():
 
 @st.cache_resource(show_spinner=False)
 def build_index(pdf_bytes):
-    # Read the PDF, cut it into overlapping pieces, turn pieces into numbers, store them in FAISS
     reader = PdfReader(io.BytesIO(pdf_bytes))
     text = " ".join(page.extract_text() or "" for page in reader.pages)
     if not text.strip():
@@ -30,7 +31,6 @@ def build_index(pdf_bytes):
     index.add(np.array(vectors).astype("float32"))
     return chunks, index
 
-# The key stays in your browser session only, and is never saved in the code
 api_key = st.sidebar.text_input("Gemini API key", type="password",
                                 value=os.environ.get("GEMINI_API_KEY", ""))
 
@@ -64,12 +64,15 @@ Notes:
 
 Question: {question}"""
 
-            client = genai.Client(api_key=api_key.strip())
+            client = genai.Client(
+                api_key=api_key.strip(),
+                http_options=types.HttpOptions(timeout=30000),
+            )
             response = None
             last_error = ""
             with st.spinner("Asking the AI..."):
-                for attempt in range(1, 4):
-                    for name in ["gemini-2.5-flash-lite", "gemini-flash-latest"]:
+                for attempt in range(1, 3):
+                    for name in MODELS:
                         try:
                             response = client.models.generate_content(model=name, contents=prompt)
                             break
@@ -77,10 +80,10 @@ Question: {question}"""
                             last_error = str(e)[:200]
                     if response is not None:
                         break
-                    time.sleep(attempt * 5)
+                    time.sleep(5)
 
             if response is None:
-                st.error(f"The AI is busy or the key is invalid. Try again in a minute. Details: {last_error}")
+                st.error(f"The AI is busy or the key is not working. Try again in a minute. Details: {last_error}")
             else:
                 st.subheader("Answer")
                 st.write(response.text)
